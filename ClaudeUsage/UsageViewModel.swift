@@ -16,6 +16,7 @@ class UsageViewModel: ObservableObject {
     @Published var lastUpdated: Date?
 
     var onTitleChange: ((String) -> Void)?
+    var onUsageUpdate: ((Double, Double) -> Void)?
 
     private var refreshTask: Task<Void, Never>?
     private let normalInterval: TimeInterval = 60
@@ -41,11 +42,11 @@ class UsageViewModel: ObservableObject {
             let raw = try await fetchUsageAPI()
             data = parse(raw)
             lastUpdated = Date()
-            onTitleChange?(menuTitle())
+            onUsageUpdate?(data!.sessionPct, data!.weeklyPct)
             return false
         } catch APIError.rateLimited {
             errorMsg = "API 요청 한도 초과. 3분 후 재시도합니다."
-            onTitleChange?(data != nil ? menuTitle() : "⚠ --")
+            notifyIcon()
             return true
         } catch let urlError as URLError {
             switch urlError.code {
@@ -58,20 +59,21 @@ class UsageViewModel: ObservableObject {
             default:
                 errorMsg = urlError.localizedDescription
             }
-            onTitleChange?(data != nil ? menuTitle() : "⚠ --")
+            notifyIcon()
             return false
         } catch {
             errorMsg = error.localizedDescription
-            onTitleChange?(data != nil ? menuTitle() : "⚠ --")
+            notifyIcon()
             return false
         }
     }
 
-    private func menuTitle() -> String {
-        guard let d = data else { return "☁ --" }
-        let dominant = max(d.sessionPct, d.weeklyPct)
-        let icon = dominant >= 80 ? "🔴" : dominant >= 50 ? "🟡" : "🟢"
-        return "\(icon) \(String(format: "%3d%%", Int(dominant)))"
+    private func notifyIcon() {
+        if let d = data {
+            onUsageUpdate?(d.sessionPct, d.weeklyPct)
+        } else {
+            onTitleChange?("⚠ --")
+        }
     }
 }
 

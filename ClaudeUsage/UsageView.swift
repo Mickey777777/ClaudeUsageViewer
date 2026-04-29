@@ -38,13 +38,30 @@ struct UsageView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let err = vm.errorMsg {
-            errorView(err)
-        } else if let d = vm.data {
+        if let d = vm.data {
             dataView(d)
+            if let err = vm.errorMsg {
+                errorBanner(err)
+            }
+        } else if let err = vm.errorMsg {
+            errorView(err)
         } else {
             loadingView
         }
+    }
+
+    private func errorBanner(_ msg: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(.orange)
+            Text(msg)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
     }
 
     private func errorView(_ msg: String) -> some View {
