@@ -18,31 +18,53 @@ class UsageViewModel: ObservableObject {
     var onTitleChange: ((String) -> Void)?
 
     private var refreshTask: Task<Void, Never>?
-    private let refreshInterval: TimeInterval = 60
+    private let normalInterval: TimeInterval = 60
+    private let rateLimitInterval: TimeInterval = 180
 
     func refresh() {
         refreshTask?.cancel()
         refreshTask = Task {
-            await doFetch()
-            try? await Task.sleep(nanoseconds: UInt64(refreshInterval * 1_000_000_000))
+            let rateLimited = await doFetch()
+            let wait = rateLimited ? rateLimitInterval : normalInterval
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
             if !Task.isCancelled { refresh() }
         }
     }
 
-    private func doFetch() async {
+    @discardableResult
+    private func doFetch() async -> Bool {
         isLoading = true
         errorMsg = nil
+        defer { isLoading = false }
 
         do {
             let raw = try await fetchUsageAPI()
             data = parse(raw)
             lastUpdated = Date()
             onTitleChange?(menuTitle())
+            return false
+        } catch APIError.rateLimited {
+            errorMsg = "API 요청 한도 초과. 3분 후 재시도합니다."
+            onTitleChange?(data != nil ? menuTitle() : "⚠ --")
+            return true
+        } catch let urlError as URLError {
+            switch urlError.code {
+            case .userAuthenticationRequired:
+                errorMsg = "토큰이 만료됐습니다. Claude Code에 다시 로그인해 주세요."
+            case .notConnectedToInternet, .networkConnectionLost:
+                errorMsg = "네트워크 연결을 확인해 주세요."
+            case .timedOut:
+                errorMsg = "요청 시간이 초과됐습니다."
+            default:
+                errorMsg = urlError.localizedDescription
+            }
+            onTitleChange?(data != nil ? menuTitle() : "⚠ --")
+            return false
         } catch {
             errorMsg = error.localizedDescription
-            onTitleChange?("⚠ --")
+            onTitleChange?(data != nil ? menuTitle() : "⚠ --")
+            return false
         }
-        isLoading = false
     }
 
     private func menuTitle() -> String {
@@ -51,6 +73,10 @@ class UsageViewModel: ObservableObject {
         let icon = dominant >= 80 ? "🔴" : dominant >= 50 ? "🟡" : "🟢"
         return "\(icon) \(String(format: "%3d%%", Int(dominant)))"
     }
+}
+
+private enum APIError: Error {
+    case rateLimited
 }
 
 private func readToken() throws -> String {
@@ -90,7 +116,17 @@ private func fetchUsageAPI() async throws -> RawUsage {
     req.timeoutInterval = 15
 
     let (data, response) = try await URLSession.shared.data(for: req)
-    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+    guard let http = response as? HTTPURLResponse else {
+        throw URLError(.badServerResponse)
+    }
+    switch http.statusCode {
+    case 200:
+        break
+    case 401:
+        throw URLError(.userAuthenticationRequired)
+    case 429:
+        throw APIError.rateLimited
+    default:
         throw URLError(.badServerResponse)
     }
     return try JSONDecoder().decode(RawUsage.self, from: data)
