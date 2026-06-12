@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 struct UsageData {
     var sessionPct: Double
@@ -82,16 +81,22 @@ private enum APIError: Error {
 }
 
 private func readToken() throws -> String {
-    let query: [String: Any] = [
-        kSecClass as String:            kSecClassGenericPassword,
-        kSecAttrService as String:      "Claude Code-credentials",
-        kSecReturnData as String:       true,
-        kSecMatchLimit as String:       kSecMatchLimitOne,
-    ]
-    var result: AnyObject?
-    let status = SecItemCopyMatching(query as CFDictionary, &result)
-    guard status == errSecSuccess,
-          let data = result as? Data,
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+    proc.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
+    let stdout = Pipe()
+    proc.standardOutput = stdout
+    proc.standardError = Pipe()
+
+    do {
+        try proc.run()
+    } catch {
+        throw URLError(.userAuthenticationRequired)
+    }
+    let data = stdout.fileHandleForReading.readDataToEndOfFile()
+    proc.waitUntilExit()
+
+    guard proc.terminationStatus == 0,
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let oauth = json["claudeAiOauth"] as? [String: Any],
           let token = oauth["accessToken"] as? String
